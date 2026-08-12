@@ -54,7 +54,7 @@ To handle 100 MB+ uploads without overloading Node.js backend memory or incurrin
 ### 1. Clone & Install Dependencies
 
 ```bash
-git clone [https://github.com/YOUR_USERNAME/secure-file-storage.git](https://github.com/YOUR_USERNAME/secure-file-storage.git)
+git clone [https://github.com/tarikulislam2000/secure-file-storage.git](https://github.com/tarikulislam2000/secure-file-storage.git)
 cd secure-file-storage
 pnpm install
 ```
