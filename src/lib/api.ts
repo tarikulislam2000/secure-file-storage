@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { ZodError, type ZodType } from "zod";
 
 import { getSession, type SessionUser } from "@/lib/auth";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 /**
  * Shared REST plumbing: one error shape, one place that decides what leaks to
@@ -25,6 +26,7 @@ export type ApiErrorCode =
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "QUOTA_EXCEEDED"
+  | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
@@ -37,6 +39,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
   QUOTA_EXCEEDED: 507,
+  RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
 };
 
@@ -45,13 +48,20 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly status: number;
   readonly details?: unknown;
+  /** Extra response headers, e.g. `Retry-After` on a 429. */
+  readonly headers?: Record<string, string>;
 
-  constructor(code: ApiErrorCode, message: string, details?: unknown) {
+  constructor(
+    code: ApiErrorCode,
+    message: string,
+    options: { details?: unknown; headers?: Record<string, string> } = {},
+  ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = STATUS_BY_CODE[code];
-    this.details = details;
+    this.details = options.details;
+    this.headers = options.headers;
   }
 
   static unauthorized(message = "Authentication required.") {
@@ -63,7 +73,11 @@ export class ApiError extends Error {
   }
 
   static badRequest(message: string, details?: unknown) {
-    return new ApiError("BAD_REQUEST", message, details);
+    return new ApiError("BAD_REQUEST", message, { details });
+  }
+
+  static forbidden(message = "You do not have access to this resource.") {
+    return new ApiError("FORBIDDEN", message);
   }
 }
 
@@ -80,7 +94,7 @@ export function jsonError(error: ApiError): NextResponse {
         ...(error.details === undefined ? {} : { details: error.details }),
       },
     },
-    { status: error.status },
+    { status: error.status, headers: error.headers },
   );
 }
 
@@ -99,7 +113,7 @@ function toApiError(error: unknown): ApiError {
     return new ApiError(
       "VALIDATION_ERROR",
       "The request body failed validation.",
-      formatZodError(error),
+      { details: formatZodError(error) },
     );
   }
 
@@ -158,6 +172,29 @@ export async function requireSession(): Promise<SessionUser> {
   }
 
   return session;
+}
+
+/**
+ * Applies a fixed-window rate limit, throwing `429` with `Retry-After` once the
+ * caller exceeds it.
+ */
+export function enforceRateLimit(
+  request: Request,
+  options: { scope: string; limit: number; windowSeconds: number },
+): void {
+  const result = checkRateLimit(
+    `${options.scope}:${getClientIp(request)}`,
+    options.limit,
+    options.windowSeconds,
+  );
+
+  if (!result.allowed) {
+    throw new ApiError(
+      "RATE_LIMITED",
+      "Too many requests. Please slow down and try again shortly.",
+      { headers: { "Retry-After": String(result.retryAfter) } },
+    );
+  }
 }
 
 /** Parses and validates a JSON request body against a Zod schema. */

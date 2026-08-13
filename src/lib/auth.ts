@@ -1,39 +1,41 @@
 import "server-only";
 
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 
 import { SESSION_TTL_SECONDS } from "@/lib/constants";
-import { env } from "@/lib/env";
+import {
+  SESSION_COOKIE_NAME,
+  sessionCookieOptions,
+  verifySessionToken,
+  type SessionUser,
+} from "@/lib/session";
 
 /**
- * Authentication primitives: password hashing and stateless JWT sessions.
- *
- * The token is stored in an `httpOnly` cookie so JavaScript — including any
- * injected via XSS — cannot read it, and `sameSite: lax` keeps it off
- * cross-site POST requests (CSRF). Being stateless, verification costs no
- * round trip to Postgres or a session store.
+ * Server-side authentication helpers: password hashing and the request-scoped
+ * session cookie. Token signing and verification live in `@/lib/session` so
+ * they stay importable from `proxy.ts`.
  */
 
-/** OWASP-recommended work factor; ~250 ms per hash on typical hardware. */
+export {
+  createSessionToken,
+  verifySessionToken,
+  SESSION_COOKIE_NAME,
+} from "@/lib/session";
+export type { SessionUser } from "@/lib/session";
+
+/** OWASP-recommended work factor; roughly 250 ms per hash on typical hardware. */
 const BCRYPT_ROUNDS = 12;
 
-export const SESSION_COOKIE_NAME = "sfs_session";
-
-const JWT_ISSUER = "secure-file-storage";
-const JWT_AUDIENCE = "secure-file-storage:web";
-
-/** The verified identity attached to an authenticated request. */
-export interface SessionUser {
-  userId: string;
-  email: string;
-}
-
-interface SessionTokenPayload extends SessionUser {
-  iat: number;
-  exp: number;
-}
+/**
+ * A real bcrypt hash (cost 12) of a random 32-byte value nobody can supply.
+ *
+ * Login compares against this when the email is unknown, so a request for a
+ * non-existent account costs the same ~250 ms as one for a real account.
+ * Without it, response latency alone would reveal which emails are registered.
+ */
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$7LQz7Ztn0w..1.ZUijqsWeIGwUuveqHqAiKoZJ36MKCn2yhB9hqOC";
 
 export async function hashPassword(plainPassword: string): Promise<string> {
   return bcrypt.hash(plainPassword, BCRYPT_ROUNDS);
@@ -54,53 +56,12 @@ export async function verifyPassword(
   }
 }
 
-/** Issues a signed session token for the given user. */
-export function createSessionToken(user: SessionUser): string {
-  return jwt.sign({ userId: user.userId, email: user.email }, env.jwtSecret, {
-    algorithm: "HS256",
-    expiresIn: SESSION_TTL_SECONDS,
-    issuer: JWT_ISSUER,
-    audience: JWT_AUDIENCE,
-    subject: user.userId,
-  });
-}
-
-/**
- * Verifies a session token's signature, expiry, issuer and audience.
- *
- * Returns `null` for anything untrusted — expired, tampered with, signed by a
- * different secret, or issued for another audience. `algorithms` is pinned so a
- * forged `alg: none` header cannot bypass verification.
- */
-export function verifySessionToken(token: string): SessionUser | null {
-  try {
-    const payload = jwt.verify(token, env.jwtSecret, {
-      algorithms: ["HS256"],
-      issuer: JWT_ISSUER,
-      audience: JWT_AUDIENCE,
-    }) as SessionTokenPayload;
-
-    if (
-      typeof payload.userId !== "string" ||
-      typeof payload.email !== "string"
-    ) {
-      return null;
-    }
-
-    return { userId: payload.userId, email: payload.email };
-  } catch {
-    return null;
-  }
-}
-
-/** Cookie attributes shared by the set and clear paths. */
-function sessionCookieOptions() {
-  return {
-    httpOnly: true,
-    secure: env.isProduction,
-    sameSite: "lax" as const,
-    path: "/",
-  };
+/** Burns the same amount of CPU as a real check, then always fails. */
+export async function verifyPasswordAgainstDummy(
+  plainPassword: string,
+): Promise<false> {
+  await verifyPassword(plainPassword, DUMMY_PASSWORD_HASH);
+  return false;
 }
 
 /** Writes the session cookie on the outgoing response. */
