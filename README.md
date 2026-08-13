@@ -14,6 +14,27 @@ A full-stack file management platform where large files stream **directly betwee
 
 ---
 
+## 🚀 Quick Access / Demo Account
+
+Sign in with the pre-configured account below to explore the app immediately — or register your own, which takes a few seconds and no email confirmation.
+
+| | |
+| --------------- | ---------------------------------------------------------------------------------- |
+| **Live App**    | [secure-file-storage-tarikul.vercel.app](https://secure-file-storage-tarikul.vercel.app) |
+| **Email**       | `demo@example.com`                                                                   |
+| **Password**    | `DemoPassword123!`                                                                   |
+
+**Worth trying once you're in:**
+
+1. **Upload** something large — the progress bar is driven by the real browser→S3 transfer, and the file body never touches the application server.
+2. **Share** a file, then open its link in a private window. It works without a session, and the S3 bucket is still not public.
+3. **Make it private again**, then reload that same link. It is dead permanently — re-publishing mints a new token rather than reviving the old one.
+4. **Switch to grid view** for image and video thumbnails, and open a shared image, video or audio file to preview it inline.
+
+> The demo account is shared, so its files are visible to anyone using it and may be cleared periodically. Please don't upload anything sensitive.
+
+---
+
 ## ✨ Features
 
 **Uploads**
