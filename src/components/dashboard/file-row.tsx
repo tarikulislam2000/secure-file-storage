@@ -1,38 +1,21 @@
 "use client";
 
+import { motion } from "framer-motion";
 import {
-  Archive,
   Check,
   Download,
-  FileText,
-  Film,
   Globe,
-  Image as ImageIcon,
   Link2,
   Loader2,
   Lock,
-  Music,
   Trash2,
 } from "lucide-react";
-import type { ComponentType } from "react";
 
-import { Button } from "@/components/ui/button";
+import { FileThumbnail } from "@/components/dashboard/file-thumbnail";
 import { useCopyLink } from "@/hooks/use-copy-link";
 import { cn } from "@/lib/cn";
-import { formatBytes, type FileCategory } from "@/lib/constants";
+import { formatBytes } from "@/lib/constants";
 import type { SerializedFile } from "@/lib/types";
-
-const CATEGORY_ICON: Record<
-  FileCategory,
-  ComponentType<{ className?: string }>
-> = {
-  image: ImageIcon,
-  video: Film,
-  audio: Music,
-  document: FileText,
-  archive: Archive,
-  other: FileText,
-};
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -40,38 +23,52 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
 });
 
+/**
+ * Shared action-button styling.
+ *
+ * Every control gets a border so the row reads as a set of affordances rather
+ * than floating glyphs, and the hover state is what distinguishes them.
+ */
+const actionClass =
+  "inline-flex h-8 items-center gap-1.5 rounded-lg border border-glass-border bg-surface/60 px-2.5 text-xs font-medium text-muted transition-all duration-200 hover:border-primary/40 hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
+
 export function FileRow({
   file,
+  index = 0,
   busy,
   onDownload,
   onToggleVisibility,
   onDelete,
 }: {
   file: SerializedFile;
+  /** Position in the list, used to stagger the entrance. */
+  index?: number;
   busy: boolean;
   onDownload: () => void;
   onToggleVisibility: () => void;
   onDelete: () => void;
 }) {
-  const Icon = CATEGORY_ICON[file.category];
   const { copied, copy } = useCopyLink();
 
   return (
-    <li
+    <motion.li
+      // `animate`, not `whileInView`: a row must never be able to get stuck
+      // invisible if it happens to mount outside the viewport.
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.35,
+        // Cap the stagger so page 5 of a list does not wait on 100 delays.
+        delay: Math.min(index, 12) * 0.03,
+        ease: [0.16, 1, 0.3, 1],
+      }}
       className={cn(
-        "flex flex-col gap-3 p-4 transition-colors hover:bg-surface-hover",
+        "flex flex-col gap-3 p-4 transition-all duration-200 hover:bg-row-hover",
         "sm:flex-row sm:items-center sm:gap-4",
         busy && "opacity-60",
       )}
     >
-      <span
-        className={cn(
-          "flex size-10 shrink-0 items-center justify-center rounded-lg",
-          file.isPublic ? "bg-primary-soft text-primary" : "bg-background text-muted",
-        )}
-      >
-        <Icon className="size-5" aria-hidden />
-      </span>
+      <FileThumbnail file={file} variant="square" />
 
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium" title={file.filename}>
@@ -102,24 +99,23 @@ export function FileRow({
 
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         {file.isPublic && (
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             onClick={() => copy(file.shareUrl)}
             aria-label={`Copy share link for ${file.filename}`}
+            className={cn(actionClass, copied && "border-success/40 text-success")}
           >
             {copied ? (
-              <Check className="size-4 text-success" aria-hidden />
+              <Check className="size-3.5" aria-hidden />
             ) : (
-              <Link2 className="size-4" aria-hidden />
+              <Link2 className="size-3.5" aria-hidden />
             )}
             <span className="hidden sm:inline">{copied ? "Copied" : "Link"}</span>
-          </Button>
+          </button>
         )}
 
-        <Button
-          variant="ghost"
-          size="sm"
+        <button
+          type="button"
           onClick={onToggleVisibility}
           disabled={busy}
           aria-label={
@@ -127,43 +123,49 @@ export function FileRow({
               ? `Make ${file.filename} private`
               : `Make ${file.filename} public`
           }
+          className={actionClass}
         >
           {file.isPublic ? (
-            <Lock className="size-4" aria-hidden />
+            <Lock className="size-3.5" aria-hidden />
           ) : (
-            <Globe className="size-4" aria-hidden />
+            <Globe className="size-3.5" aria-hidden />
           )}
           <span className="hidden sm:inline">
             {file.isPublic ? "Make private" : "Share"}
           </span>
-        </Button>
+        </button>
 
-        <Button
-          variant="secondary"
-          size="sm"
+        <button
+          type="button"
           onClick={onDownload}
           disabled={busy}
           aria-label={`Download ${file.filename}`}
+          className={cn(
+            actionClass,
+            "border-primary/30 bg-primary-soft text-primary hover:border-primary/60 hover:bg-primary-soft hover:text-primary",
+          )}
         >
           {busy ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden />
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
           ) : (
-            <Download className="size-4" aria-hidden />
+            <Download className="size-3.5" aria-hidden />
           )}
           <span className="hidden sm:inline">Download</span>
-        </Button>
+        </button>
 
-        <Button
-          variant="ghost"
-          size="sm"
+        <button
+          type="button"
           onClick={onDelete}
           disabled={busy}
           aria-label={`Delete ${file.filename}`}
-          className="text-muted hover:bg-danger-soft hover:text-danger"
+          className={cn(
+            actionClass,
+            "px-2 hover:border-danger/50 hover:bg-danger-soft hover:text-danger",
+          )}
         >
-          <Trash2 className="size-4" aria-hidden />
-        </Button>
+          <Trash2 className="size-3.5" aria-hidden />
+        </button>
       </div>
-    </li>
+    </motion.li>
   );
 }

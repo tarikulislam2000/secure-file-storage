@@ -1,38 +1,24 @@
 "use client";
 
+import { motion } from "framer-motion";
 import {
-  Archive,
   Check,
   Download,
-  FileText,
-  Film,
   Globe,
-  Image as ImageIcon,
   Link2,
   Loader2,
   Lock,
-  Music,
   Trash2,
 } from "lucide-react";
-import { useRef, useState, type ComponentType } from "react";
 
-import { Button } from "@/components/ui/button";
+import { FileThumbnail } from "@/components/dashboard/file-thumbnail";
 import { useCopyLink } from "@/hooks/use-copy-link";
 import { cn } from "@/lib/cn";
-import { formatBytes, type FileCategory } from "@/lib/constants";
+import { formatBytes } from "@/lib/constants";
 import type { SerializedFile } from "@/lib/types";
 
-const CATEGORY_ICON: Record<
-  FileCategory,
-  ComponentType<{ className?: string }>
-> = {
-  image: ImageIcon,
-  video: Film,
-  audio: Music,
-  document: FileText,
-  archive: Archive,
-  other: FileText,
-};
+const actionClass =
+  "inline-flex size-8 items-center justify-center rounded-lg border border-glass-border bg-surface/60 text-muted transition-all duration-200 hover:border-primary/40 hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * Grid tile: a media preview above the filename, size, visibility badge and the
@@ -40,12 +26,14 @@ const CATEGORY_ICON: Record<
  */
 export function FileCard({
   file,
+  index = 0,
   busy,
   onDownload,
   onToggleVisibility,
   onDelete,
 }: {
   file: SerializedFile;
+  index?: number;
   busy: boolean;
   onDownload: () => void;
   onToggleVisibility: () => void;
@@ -54,14 +42,22 @@ export function FileCard({
   const { copied, copy } = useCopyLink();
 
   return (
-    <li
+    <motion.li
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -4 }}
+      transition={{
+        duration: 0.35,
+        delay: Math.min(index, 12) * 0.03,
+        ease: [0.16, 1, 0.3, 1],
+      }}
       className={cn(
-        "group flex flex-col overflow-hidden rounded-xl border border-border bg-surface",
-        "transition-colors hover:border-primary/40",
+        "flex flex-col overflow-hidden rounded-xl border border-glass-border bg-glass backdrop-blur-md",
+        "transition-colors duration-200 hover:border-primary/40",
         busy && "opacity-60",
       )}
     >
-      <FilePreview file={file} />
+      <FileThumbnail file={file} variant="cover" />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2 p-3">
         <div className="min-w-0">
@@ -87,25 +83,26 @@ export function FileCard({
           </p>
         </div>
 
-        <div className="mt-auto flex items-center gap-0.5 pt-1">
-          <Button
-            variant="ghost"
-            size="sm"
+        <div className="mt-auto flex items-center gap-1.5 pt-1">
+          <button
+            type="button"
             onClick={onDownload}
             disabled={busy}
             aria-label={`Download ${file.filename}`}
-            className="px-2"
+            className={cn(
+              actionClass,
+              "border-primary/30 bg-primary-soft text-primary hover:border-primary/60 hover:text-primary",
+            )}
           >
             {busy ? (
               <Loader2 className="size-4 animate-spin" aria-hidden />
             ) : (
               <Download className="size-4" aria-hidden />
             )}
-          </Button>
+          </button>
 
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             onClick={onToggleVisibility}
             disabled={busy}
             aria-label={
@@ -113,122 +110,47 @@ export function FileCard({
                 ? `Make ${file.filename} private`
                 : `Make ${file.filename} public`
             }
-            className="px-2"
+            className={actionClass}
           >
             {file.isPublic ? (
               <Lock className="size-4" aria-hidden />
             ) : (
               <Globe className="size-4" aria-hidden />
             )}
-          </Button>
+          </button>
 
           {file.isPublic && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
+              type="button"
               onClick={() => copy(file.shareUrl)}
               aria-label={`Copy share link for ${file.filename}`}
-              className="px-2"
+              className={cn(
+                actionClass,
+                copied && "border-success/40 text-success",
+              )}
             >
               {copied ? (
-                <Check className="size-4 text-success" aria-hidden />
+                <Check className="size-4" aria-hidden />
               ) : (
                 <Link2 className="size-4" aria-hidden />
               )}
-            </Button>
+            </button>
           )}
 
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             onClick={onDelete}
             disabled={busy}
             aria-label={`Delete ${file.filename}`}
-            className="ml-auto px-2 text-muted hover:bg-danger-soft hover:text-danger"
+            className={cn(
+              actionClass,
+              "ml-auto hover:border-danger/50 hover:bg-danger-soft hover:text-danger",
+            )}
           >
             <Trash2 className="size-4" aria-hidden />
-          </Button>
+          </button>
         </div>
       </div>
-    </li>
-  );
-}
-
-/**
- * The preview pane.
- *
- * `downloadUrl` is a presigned URL with a short lifetime, so it can expire
- * while a tab sits open. Any load failure falls back to the category icon
- * rather than leaving a broken-image glyph in the grid.
- */
-function FilePreview({ file }: { file: SerializedFile }) {
-  const Icon = CATEGORY_ICON[file.category];
-  const [failed, setFailed] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  const canPreview = Boolean(file.downloadUrl) && !failed;
-  const isImage = file.category === "image";
-  const isVideo = file.category === "video";
-
-  if (!canPreview || (!isImage && !isVideo)) {
-    return (
-      <div className="flex aspect-video items-center justify-center border-b border-border bg-background">
-        <Icon className="size-8 text-muted" aria-hidden />
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative aspect-video overflow-hidden border-b border-border bg-background">
-      {isImage ? (
-        // next/image is deliberately not used: it would route private files
-        // through our optimizer, and a presigned URL's signature changes on
-        // every list response, so the optimizer's cache could never hit.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={file.downloadUrl}
-          // Decorative: the filename directly below is the accessible name, so
-          // announcing it twice would only add noise.
-          alt=""
-          loading="lazy"
-          decoding="async"
-          onError={() => setFailed(true)}
-          className="size-full object-cover"
-        />
-      ) : (
-        <video
-          ref={videoRef}
-          src={file.downloadUrl}
-          muted
-          loop
-          playsInline
-          // Fetch just enough for a poster frame; the full file only streams if
-          // the user actually hovers.
-          preload="metadata"
-          onError={() => setFailed(true)}
-          onMouseEnter={() => {
-            void videoRef.current?.play().catch(() => {
-              // Autoplay can be refused by policy; the still frame is fine.
-            });
-          }}
-          onMouseLeave={() => {
-            const video = videoRef.current;
-            if (!video) return;
-            video.pause();
-            video.currentTime = 0;
-          }}
-          className="size-full object-cover"
-        />
-      )}
-
-      {isVideo && (
-        <span
-          className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white"
-          aria-hidden
-        >
-          Video
-        </span>
-      )}
-    </div>
+    </motion.li>
   );
 }

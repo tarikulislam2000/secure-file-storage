@@ -32,6 +32,18 @@
 
   --ring: rgb(79 70 229 / 0.35);
   --shadow-color: 15 23 42;
+
+  /*
+   * Glassmorphic surfaces, carried over from the landing page.
+   *
+   * Tokenised rather than hardcoded because the dashboard renders in both
+   * schemes: a literal `bg-slate-900/40` would put this theme's near-black
+   * foreground text on a dark panel. The dark block below resolves to exactly
+   * slate-900/40, slate-800/80 and slate-800/40; these are their light twins.
+   */
+  --glass: rgb(255 255 255 / 0.72);
+  --glass-border: rgb(226 232 240 / 0.9);
+  --row-hover: rgb(241 245 249 / 0.85);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -59,6 +71,10 @@
 
     --ring: rgb(99 102 241 / 0.45);
     --shadow-color: 0 0 0;
+
+    --glass: rgb(15 23 42 / 0.4); /* slate-900/40 */
+    --glass-border: rgb(30 41 59 / 0.8); /* slate-800/80 */
+    --row-hover: rgb(30 41 59 / 0.4); /* slate-800/40 */
   }
 }
 
@@ -83,6 +99,10 @@
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
 
+  --color-glass: var(--glass);
+  --color-glass-border: var(--glass-border);
+  --color-row-hover: var(--row-hover);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -94,7 +114,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Visible keyboard focus everywhere, without a focus ring on mouse clicks. */
+/*
+ * Visible keyboard focus everywhere, without a focus ring on mouse clicks.
+ *
+ * This single indigo ring is the app's focus indicator; components deliberately
+ * do not define their own. The 2px offset makes it read as a ring floating
+ * clear of the control rather than a border thickening, which is what a
+ * per-component `ring-*` utility would be reaching for anyway.
+ *
+ * Left unlayered on purpose: unlayered CSS outranks anything in Tailwind's
+ * layers, so no utility can accidentally suppress the focus indicator.
+ */
 :focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;

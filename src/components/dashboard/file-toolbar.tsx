@@ -32,8 +32,15 @@ const SORT_OPTIONS = [
   { value: "fileSize:asc", label: "Smallest first" },
 ];
 
-const selectClass =
-  "h-9 rounded-lg border border-border bg-surface px-2.5 text-sm text-foreground transition-colors hover:bg-surface-hover";
+/**
+ * Every control is `h-9` on the same glass treatment so the search field,
+ * the three selects and the view toggle sit on one unbroken line.
+ *
+ * The focus ring replaces the global outline here rather than stacking with it,
+ * which would draw two rings around a single input.
+ */
+const CONTROL_BASE =
+  "h-9 rounded-lg border border-glass-border bg-glass text-sm text-foreground backdrop-blur-md transition-all duration-200 hover:border-primary/40";
 
 export function FileToolbar({
   filters,
@@ -54,7 +61,7 @@ export function FileToolbar({
   }
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="relative flex-1 sm:min-w-56">
         <Search
           className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
@@ -66,7 +73,7 @@ export function FileToolbar({
           onChange={(event) => set({ q: event.target.value })}
           placeholder="Search files…"
           aria-label="Search files by name"
-          className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm placeholder:text-muted"
+          className={cn(CONTROL_BASE, "w-full pl-9 pr-3 placeholder:text-muted")}
         />
       </div>
 
@@ -74,7 +81,7 @@ export function FileToolbar({
         value={filters.category}
         onChange={(event) => set({ category: event.target.value })}
         aria-label="Filter by file type"
-        className={cn(selectClass, filters.category && "border-primary")}
+        className={cn(CONTROL_BASE, "px-2.5", filters.category && "border-primary/60")}
       >
         <option value="">All types</option>
         {FILE_CATEGORIES.map((category) => (
@@ -88,7 +95,11 @@ export function FileToolbar({
         value={filters.visibility}
         onChange={(event) => set({ visibility: event.target.value })}
         aria-label="Filter by visibility"
-        className={cn(selectClass, filters.visibility && "border-primary")}
+        className={cn(
+          CONTROL_BASE,
+          "px-2.5",
+          filters.visibility && "border-primary/60",
+        )}
       >
         <option value="">All files</option>
         <option value="private">Private</option>
@@ -102,7 +113,7 @@ export function FileToolbar({
           set({ sort, order });
         }}
         aria-label="Sort files"
-        className={selectClass}
+        className={cn(CONTROL_BASE, "px-2.5")}
       >
         {SORT_OPTIONS.map((option) => (
           <option key={option.value} value={option.value}>
@@ -125,7 +136,7 @@ export function FileToolbar({
       <div
         role="group"
         aria-label="View mode"
-        className="flex h-9 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-surface p-0.5 sm:ml-auto"
+        className="flex h-9 shrink-0 items-center gap-0.5 rounded-lg border border-glass-border bg-glass p-0.5 backdrop-blur-md sm:ml-auto"
       >
         <ViewModeButton
           active={viewMode === "list"}
@@ -165,9 +176,10 @@ function ViewModeButton({
       aria-label={label}
       title={label}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-md transition-colors",
+        "inline-flex size-8 items-center justify-center rounded-md transition-all duration-200",
+        "",
         active
-          ? "bg-primary-soft text-primary"
+          ? "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-sm"
           : "text-muted hover:bg-surface-hover hover:text-foreground",
       )}
     >

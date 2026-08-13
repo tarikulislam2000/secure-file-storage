@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertCircle, Inbox, Loader2, Upload } from "lucide-react";
+import { AlertCircle, Inbox, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { FileCard } from "@/components/dashboard/file-card";
 import { FileRow } from "@/components/dashboard/file-row";
+import { FileSkeleton } from "@/components/dashboard/file-skeleton";
 import {
   DEFAULT_FILTERS,
   FileToolbar,
@@ -201,9 +202,8 @@ export function DashboardView({ email }: { email: string }) {
             }
           />
         ) : loading && !data ? (
-          <div className="flex items-center justify-center gap-2 p-12 text-sm text-muted">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading files…
+          <div aria-busy aria-label="Loading files">
+            <FileSkeleton viewMode={viewMode} />
           </div>
         ) : files.length === 0 ? (
           <EmptyState
@@ -236,10 +236,11 @@ export function DashboardView({ email }: { email: string }) {
             aria-busy={loading}
             className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
           >
-            {files.map((file) => (
+            {files.map((file, index) => (
               <FileCard
                 key={file.id}
                 file={file}
+                index={index}
                 busy={busyId === file.id}
                 onDownload={() => handleDownload(file)}
                 onToggleVisibility={() => handleToggleVisibility(file)}
@@ -249,10 +250,11 @@ export function DashboardView({ email }: { email: string }) {
           </ul>
         ) : (
           <ul className="divide-y divide-border" aria-busy={loading}>
-            {files.map((file) => (
+            {files.map((file, index) => (
               <FileRow
                 key={file.id}
                 file={file}
+                index={index}
                 busy={busyId === file.id}
                 onDownload={() => handleDownload(file)}
                 onToggleVisibility={() => handleToggleVisibility(file)}
