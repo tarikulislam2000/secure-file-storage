@@ -114,4 +114,4 @@ Format: <type>(<scope>): <short description>
 Allowed Types: feat, fix, docs, style, refactor, perf, test, chore, build, ci
 
 📄 License
-This project is open source and available under the MIT License.
+This project is open source and available under the [MIT License](./LICENSE).
