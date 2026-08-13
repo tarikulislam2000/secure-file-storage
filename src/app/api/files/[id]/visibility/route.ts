@@ -43,6 +43,6 @@ export const PATCH = withErrorHandling(
       },
     });
 
-    return jsonOk({ file: serializeFile(file) });
+    return jsonOk({ file: await serializeFile(file) });
   },
 );

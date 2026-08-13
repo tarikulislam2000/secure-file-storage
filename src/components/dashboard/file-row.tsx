@@ -14,9 +14,10 @@ import {
   Music,
   Trash2,
 } from "lucide-react";
-import { useState, type ComponentType } from "react";
+import type { ComponentType } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useCopyLink } from "@/hooks/use-copy-link";
 import { cn } from "@/lib/cn";
 import { formatBytes, type FileCategory } from "@/lib/constants";
 import type { SerializedFile } from "@/lib/types";
@@ -53,21 +54,7 @@ export function FileRow({
   onDelete: () => void;
 }) {
   const Icon = CATEGORY_ICON[file.category];
-  const [copied, setCopied] = useState(false);
-
-  async function copyShareLink() {
-    if (!file.shareUrl) return;
-
-    try {
-      await navigator.clipboard.writeText(file.shareUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard access can be denied (insecure origin, permissions policy);
-      // a select-and-copy fallback keeps the link reachable either way.
-      window.prompt("Copy this share link:", file.shareUrl);
-    }
-  }
+  const { copied, copy } = useCopyLink();
 
   return (
     <li
@@ -118,7 +105,7 @@ export function FileRow({
           <Button
             variant="ghost"
             size="sm"
-            onClick={copyShareLink}
+            onClick={() => copy(file.shareUrl)}
             aria-label={`Copy share link for ${file.filename}`}
           >
             {copied ? (

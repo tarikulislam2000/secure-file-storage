@@ -31,6 +31,18 @@ export const DOWNLOAD_URL_TTL_SECONDS = 60 * 60; // 1 hour
  */
 export const PUBLIC_DOWNLOAD_URL_TTL_SECONDS = 15 * 60; // 15 minutes
 
+/**
+ * Lifetime of the presigned URL behind a grid thumbnail.
+ *
+ * Every list response carries one of these per image or video, so they are the
+ * most widely handed-out URLs in the app. Keeping the window short bounds what
+ * a response captured from a log or a shared screen is still worth.
+ */
+export const PREVIEW_URL_TTL_SECONDS = 15 * 60; // 15 minutes
+
+/** Categories the dashboard grid can render a real preview for. */
+export const PREVIEWABLE_CATEGORIES = ["image", "video"] as const;
+
 /** Session lifetime for the signed JWT and its httpOnly cookie. */
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 

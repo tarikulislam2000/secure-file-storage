@@ -14,6 +14,9 @@ export interface AuthUser {
   createdAt?: string;
 }
 
+/** How the dashboard lays out the file collection. */
+export type ViewMode = "list" | "grid";
+
 /** A file as returned by the owner-facing endpoints. */
 export interface SerializedFile {
   id: string;
@@ -24,6 +27,14 @@ export interface SerializedFile {
   isPublic: boolean;
   /** Present only while the file is public. */
   shareUrl: string | null;
+  /**
+   * Short-lived presigned URL for rendering a thumbnail.
+   *
+   * Only populated for images and video — the categories the grid can actually
+   * preview. Optional because it expires: a card holding a stale response must
+   * fall back to an icon rather than show a broken image.
+   */
+  downloadUrl?: string;
   createdAt: string;
   updatedAt: string;
 }

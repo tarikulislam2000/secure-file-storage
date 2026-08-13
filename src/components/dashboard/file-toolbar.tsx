@@ -1,9 +1,10 @@
 "use client";
 
-import { Search, X } from "lucide-react";
+import { LayoutGrid, List, Search, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { FILE_CATEGORIES } from "@/lib/constants";
+import type { ViewMode } from "@/lib/types";
 
 /** The controlled query state the dashboard drives its list from. */
 export interface FileFilters {
@@ -37,9 +38,13 @@ const selectClass =
 export function FileToolbar({
   filters,
   onChange,
+  viewMode,
+  onViewModeChange,
 }: {
   filters: FileFilters;
   onChange: (filters: FileFilters) => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
 }) {
   const isFiltered =
     filters.q !== "" || filters.category !== "" || filters.visibility !== "";
@@ -116,6 +121,57 @@ export function FileToolbar({
           Clear
         </button>
       )}
+
+      <div
+        role="group"
+        aria-label="View mode"
+        className="flex h-9 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-surface p-0.5 sm:ml-auto"
+      >
+        <ViewModeButton
+          active={viewMode === "list"}
+          onClick={() => onViewModeChange("list")}
+          label="List view"
+          icon={<List className="size-4" aria-hidden />}
+        />
+        <ViewModeButton
+          active={viewMode === "grid"}
+          onClick={() => onViewModeChange("grid")}
+          label="Grid view"
+          icon={<LayoutGrid className="size-4" aria-hidden />}
+        />
+      </div>
     </div>
+  );
+}
+
+function ViewModeButton({
+  active,
+  onClick,
+  label,
+  icon,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      // `aria-pressed` is what makes a pair of icon buttons read as a toggle
+      // rather than as two unrelated actions.
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "inline-flex size-8 items-center justify-center rounded-md transition-colors",
+        active
+          ? "bg-primary-soft text-primary"
+          : "text-muted hover:bg-surface-hover hover:text-foreground",
+      )}
+    >
+      {icon}
+    </button>
   );
 }

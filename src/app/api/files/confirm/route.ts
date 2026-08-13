@@ -83,7 +83,7 @@ export const POST = withErrorHandling(async (request: Request) => {
       },
     });
 
-    return jsonOk({ file: serializeFile(file) }, 201);
+    return jsonOk({ file: await serializeFile(file) }, 201);
   } catch (error) {
     // The unique index on `s3Key` makes confirm idempotent-safe: a retried or
     // duplicated call cannot create a second row for the same object.

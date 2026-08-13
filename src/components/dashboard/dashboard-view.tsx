@@ -3,6 +3,7 @@
 import { AlertCircle, Inbox, Loader2, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { FileCard } from "@/components/dashboard/file-card";
 import { FileRow } from "@/components/dashboard/file-row";
 import {
   DEFAULT_FILTERS,
@@ -15,7 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { filesApi, toApiClientError } from "@/lib/api-client";
-import type { FileListResponse, SerializedFile } from "@/lib/types";
+import { cn } from "@/lib/cn";
+import type { FileListResponse, SerializedFile, ViewMode } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -31,6 +33,7 @@ export function DashboardView({ email }: { email: string }) {
   const toast = useToast();
 
   const [filters, setFilters] = useState<FileFilters>(DEFAULT_FILTERS);
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<FileListResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -146,6 +149,9 @@ export function DashboardView({ email }: { email: string }) {
 
   const files = data?.files ?? [];
   const pagination = data?.pagination;
+  // True only when the grid is actually showing cards — the error, loading and
+  // empty states are single blocks that still want the framed panel.
+  const hasCards = viewMode === "grid" && !error && files.length > 0;
   const isFiltered =
     filters.q !== "" || filters.category !== "" || filters.visibility !== "";
 
@@ -167,9 +173,22 @@ export function DashboardView({ email }: { email: string }) {
 
       {data && <StorageMeter storage={data.storage} />}
 
-      <FileToolbar filters={filters} onChange={handleFiltersChange} />
+      <FileToolbar
+        filters={filters}
+        onChange={handleFiltersChange}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+      />
 
-      <section className="overflow-hidden rounded-xl border border-border bg-surface">
+      {/* The grid's cards carry their own borders, so the surrounding panel is
+          only drawn when there is a single block to frame. */}
+      <section
+        className={cn(
+          hasCards
+            ? ""
+            : "overflow-hidden rounded-xl border border-border bg-surface",
+        )}
+      >
         {error ? (
           <EmptyState
             icon={<AlertCircle className="size-8 text-danger" aria-hidden />}
@@ -212,6 +231,22 @@ export function DashboardView({ email }: { email: string }) {
               )
             }
           />
+        ) : viewMode === "grid" ? (
+          <ul
+            aria-busy={loading}
+            className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
+          >
+            {files.map((file) => (
+              <FileCard
+                key={file.id}
+                file={file}
+                busy={busyId === file.id}
+                onDownload={() => handleDownload(file)}
+                onToggleVisibility={() => handleToggleVisibility(file)}
+                onDelete={() => setPendingDelete(file)}
+              />
+            ))}
+          </ul>
         ) : (
           <ul className="divide-y divide-border" aria-busy={loading}>
             {files.map((file) => (

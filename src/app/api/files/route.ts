@@ -54,7 +54,7 @@ export const GET = withErrorHandling(async (request: Request) => {
   const used = usage._sum.fileSize ?? 0;
 
   return jsonOk({
-    files: files.map(serializeFile),
+    files: await Promise.all(files.map(serializeFile)),
     pagination: {
       page: query.page,
       limit: query.limit,

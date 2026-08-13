@@ -16,7 +16,7 @@ export const GET = withErrorHandling(
 
     const file = await findOwnedFileOrThrow(id, session.userId);
 
-    return jsonOk({ file: serializeFile(file) });
+    return jsonOk({ file: await serializeFile(file) });
   },
 );
 

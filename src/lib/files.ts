@@ -8,12 +8,14 @@ import {
   categorizeMimeType,
   formatBytes,
   MAX_FILE_SIZE_BYTES,
+  PREVIEW_URL_TTL_SECONDS,
+  PREVIEWABLE_CATEGORIES,
   USER_STORAGE_QUOTA_BYTES,
   type FileCategory,
 } from "@/lib/constants";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
-import { getFileExtension } from "@/lib/s3";
+import { createDownloadUrl, getFileExtension } from "@/lib/s3";
 import type { PublicFile, SerializedFile } from "@/lib/types";
 
 export type { PublicFile, SerializedFile } from "@/lib/types";
@@ -26,21 +28,55 @@ export type { PublicFile, SerializedFile } from "@/lib/types";
  * unless the file is actually public, so a link cannot be guessed ahead of the
  * owner deciding to publish.
  */
-export function serializeFile(file: FileRecord): SerializedFile {
+export async function serializeFile(
+  file: FileRecord,
+): Promise<SerializedFile> {
+  const category = categorizeMimeType(file.mimeType);
+
   return {
     id: file.id,
     filename: file.filename,
     fileSize: file.fileSize,
     mimeType: file.mimeType,
-    category: categorizeMimeType(file.mimeType),
+    category,
     isPublic: file.isPublic,
     shareUrl:
       file.isPublic && file.shareToken
         ? `${env.appUrl}/s/${file.shareToken}`
         : null,
+    downloadUrl: await buildPreviewUrl(file, category),
     createdAt: file.createdAt.toISOString(),
     updatedAt: file.updatedAt.toISOString(),
   };
+}
+
+/**
+ * Presigned URL for a grid thumbnail, or `undefined` when the category has
+ * nothing to show.
+ *
+ * Restricted to images and video on purpose. Signing every file would put a
+ * read-granting URL for the user's entire library into every list response,
+ * including the documents and archives the grid only ever draws an icon for.
+ *
+ * Signing is a local HMAC with no call to S3, so the cost is a few microseconds
+ * per file rather than a round trip.
+ */
+async function buildPreviewUrl(
+  file: FileRecord,
+  category: FileCategory,
+): Promise<string | undefined> {
+  if (!(PREVIEWABLE_CATEGORIES as readonly string[]).includes(category)) {
+    return undefined;
+  }
+
+  const { url } = await createDownloadUrl({
+    key: file.s3Key,
+    filename: file.filename,
+    contentType: file.mimeType,
+    expiresIn: PREVIEW_URL_TTL_SECONDS,
+  });
+
+  return url;
 }
 
 /** Prisma `where` fragments that select each dashboard category by MIME type. */
