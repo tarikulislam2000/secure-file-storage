@@ -28,6 +28,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        {/*
+          Entrance animations render their initial `opacity: 0` into the HTML,
+          which without JavaScript would never be animated away — leaving the
+          landing page mostly blank. A stylesheet `!important` outranks a
+          non-important inline style, so this restores the content for readers
+          without JS while costing nothing to everyone else.
+        */}
+        <noscript>
+          <style>{`[style*="opacity:0"],[style*="opacity: 0"]{opacity:1!important;transform:none!important}`}</style>
+        </noscript>
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
