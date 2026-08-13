@@ -41,13 +41,25 @@ export async function serializeFile(
     category,
     isPublic: file.isPublic,
     shareUrl:
-      file.isPublic && file.shareToken
-        ? `${env.appUrl}/s/${file.shareToken}`
-        : null,
+      file.isPublic && file.shareToken ? buildShareUrl(file.shareToken) : null,
     downloadUrl: await buildPreviewUrl(file, category),
     createdAt: file.createdAt.toISOString(),
     updatedAt: file.updatedAt.toISOString(),
   };
+}
+
+/**
+ * A shareable link for a public file.
+ *
+ * Absolute when `NEXT_PUBLIC_APP_URL` is configured; otherwise a root-relative
+ * path, which the browser resolves against its own origin. Emitting a relative
+ * path beats hardcoding a fallback origin: a link built from the wrong absolute
+ * host is broken for whoever receives it, and nothing on the server can detect
+ * that, whereas the client always knows where it is actually running.
+ */
+function buildShareUrl(shareToken: string): string {
+  const origin = env.appUrl;
+  return origin ? `${origin}/s/${shareToken}` : `/s/${shareToken}`;
 }
 
 /**

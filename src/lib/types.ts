@@ -25,7 +25,12 @@ export interface SerializedFile {
   mimeType: string;
   category: FileCategory;
   isPublic: boolean;
-  /** Present only while the file is public. */
+  /**
+   * Present only while the file is public.
+   *
+   * Absolute when `NEXT_PUBLIC_APP_URL` is set, otherwise a root-relative path
+   * for the client to resolve against its own origin.
+   */
   shareUrl: string | null;
   /**
    * Short-lived presigned URL for rendering a thumbnail.
