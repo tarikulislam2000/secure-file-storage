@@ -31,7 +31,11 @@ model File {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@index([ownerId])
-  @@index([shareToken])
+  // Every dashboard query is "this owner's files, newest first", so the
+  // composite index serves both the filter and the sort in one scan. It also
+  // covers plain `ownerId` lookups, making a standalone index redundant.
+  @@index([ownerId, createdAt(sort: Desc)])
+  // `shareToken` is already `@unique`, which creates its own index — a second
+  // one would only add write cost.
   @@map("files")
 }

@@ -97,9 +97,16 @@ export function buildObjectKey(ownerId: string, filename: string): string {
 /**
  * Presigned `PUT` URL the browser streams the file body to.
  *
- * `ContentType` is part of the signature, so the client cannot store the object
- * under a different content type than the one we recorded. The size is verified
- * authoritatively with {@link headObject} once the upload completes.
+ * `signableHeaders` is what actually binds the content type to the URL. SigV4
+ * only enforces headers listed in `X-Amz-SignedHeaders`, and the presigner signs
+ * just `host` by default — setting `ContentType` on the command alone leaves the
+ * client free to PUT the object as any type it likes. With `content-type` signed,
+ * S3 rejects a mismatched upload with 403 before a byte is stored.
+ *
+ * Size is deliberately *not* signed. Browsers set `Content-Length` themselves and
+ * signing it is a well-known source of upload failures; instead {@link headObject}
+ * reads the stored size back at confirm time, which is authoritative rather than
+ * merely declared.
  */
 export async function createUploadUrl(params: {
   key: string;
@@ -113,6 +120,7 @@ export async function createUploadUrl(params: {
 
   const url = await getSignedUrl(getClient(), command, {
     expiresIn: UPLOAD_URL_TTL_SECONDS,
+    signableHeaders: new Set(["content-type"]),
   });
 
   return { url, expiresIn: UPLOAD_URL_TTL_SECONDS };
