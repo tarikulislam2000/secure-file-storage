@@ -4,114 +4,231 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![AWS S3](https://img.shields.io/badge/AWS_S3-FF9900?style=for-the-badge&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
 [![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
-[![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
+[![Prisma](https://img.shields.io/badge/Prisma_7-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
 [![pnpm](https://img.shields.io/badge/pnpm-F69220?style=for-the-badge&logo=pnpm&logoColor=white)](https://pnpm.io/)
 
-A production-quality full-stack file management platform designed for high performance and strict security. Built with Next.js, TypeScript, AWS S3, Supabase (PostgreSQL), and Prisma ORM for the Persist Ventures Full Stack Engineer assessment.
+A full-stack file management platform where large files stream **directly between the browser and AWS S3**, never through the application server. Built with Next.js 16, TypeScript, Prisma 7 and Supabase PostgreSQL for the Persist Ventures Full Stack Engineer assessment.
 
-🌐 **Live Demo:** [https://secure-file-storage-tarikul.vercel.app](https://secure-file-storage-tarikul.vercel.app)  
-🏛 **System Architecture Document:** See [`SYSTEM_DESIGN.md`](./SYSTEM_DESIGN.md) for complete technical architecture, security decisions, and scaling considerations.
+🌐 **Live Demo:** [https://secure-file-storage-tarikul.vercel.app](https://secure-file-storage-tarikul.vercel.app)
+🏛 **Architecture:** See [`SYSTEM_DESIGN.md`](./SYSTEM_DESIGN.md) for the full technical design, security model, and scaling trade-offs.
+
+---
+
+## ✨ Features
+
+**Uploads**
+
+- Files up to **100 MB**, streamed browser → S3 over a presigned `PUT`. The API only issues the URL; no file body ever passes through it.
+- Real-time per-file progress, multi-file queue, and per-file cancellation.
+- Client-side pre-flight validation (size, blocked extensions) with the server re-checking everything.
+- Upload size and content type are read back **from S3** after the transfer, not trusted from the client.
+
+**Access control**
+
+- Email + password auth with `bcryptjs` (cost 12) and stateless JWTs in `httpOnly`, `SameSite=Lax` cookies.
+- Private files are readable only by their owner, via a 60-minute presigned `GET` issued after an ownership check.
+- Public files are shared through a random token, resolving to a 15-minute presigned `GET`. **The S3 bucket is never public.**
+- Un-publishing a file **rotates its share token**, so a link already circulating is permanently dead.
+- Fixed-window rate limiting on auth, presign, and public share endpoints.
+
+**Dashboard**
+
+- List and grid views, with image/video thumbnails.
+- Search by name, filter by category and visibility, sort, and paginate.
+- 1 GB storage quota per account with a live usage meter.
 
 ---
 
 ## 🛠 Tech Stack
 
-- **Frontend:** Next.js (App Router), React, TypeScript, Tailwind CSS, Lucide Icons
-- **Backend:** Next.js Route Handlers (Node.js runtime), Prisma ORM
-- **Database:** Supabase (PostgreSQL with Connection Pooling)
-- **Cloud Storage:** AWS S3 (Direct browser-to-S3 presigned URL uploads)
-- **Authentication:** JWT (stored in HTTP-only cookies) & Bcrypt password hashing
-- **Package Manager:** `pnpm`
-- **Code Quality:** ESLint, Commitlint, Husky (Enforced Conventional Commits)
+| Layer          | Choice                                                              |
+| -------------- | ------------------------------------------------------------------- |
+| Framework      | Next.js 16 (App Router, Route Handlers, Node.js runtime)             |
+| Language       | TypeScript (strict)                                                  |
+| UI             | React 19, Tailwind CSS v4, Framer Motion, Lucide icons               |
+| Database       | Supabase PostgreSQL via Prisma 7 + `@prisma/adapter-pg` driver adapter |
+| Storage        | AWS S3 (presigned `PUT` / `GET`, Block Public Access enabled)        |
+| Auth           | `jsonwebtoken` (HS256) + `bcryptjs`                                  |
+| Validation     | Zod — schemas shared by the API and the forms that call it           |
+| HTTP           | Axios (used for upload progress, which `fetch` still cannot report)  |
+| Tooling        | ESLint, Husky, Commitlint (Conventional Commits), pnpm               |
 
 ---
 
-## ✨ Core Features
+## 🚀 How an upload works
 
-- 🔐 **Authentication & Authorization:** Secure user registration, password hashing (bcrypt), and stateless JWT session management.
-- 📦 **100 MB+ Direct S3 Uploads:** Utilizes AWS S3 Presigned PUT URLs to stream files directly from the browser to S3, bypassing server memory bottlenecks and request payload limits.
-- 📊 **Real-time Progress Tracking:** Axios-driven upload progress reporting for large file transfers.
-- 🔒 **Granular Access Control:**
-  - **Private Files:** Only accessible to the verified file owner via short-lived AWS S3 Presigned GET URLs generated after backend authorization checks.
-  - **Public Files:** Accessible via shareable tokens that generate temporary signed download links without making the S3 bucket publicly readable.
-- 📁 **Personal Dashboard:** Search, filter, toggle file visibility (Public/Private), track usage, and manage uploads.
+```text
+┌──────────────┐   1. POST /api/files/upload-url    ┌──────────────────────┐
+│              │ ─────────────────────────────────► │  Next.js Route       │
+│   Browser    │ ◄───────────────────────────────── │  Handler             │
+│              │   2. presigned PUT URL + ticket    └──────────┬───────────┘
+│              │                                               │
+│              │   3. PUT file body (direct, with progress)    │ 5. verify + INSERT
+│              │ ──────────────────────────────┐               ▼
+└──────┬───────┘                               │    ┌──────────────────────┐
+       │                                       ▼    │ Supabase PostgreSQL  │
+       │  4. POST /api/files/confirm   ┌──────────┐ └──────────────────────┘
+       └─────────────────────────────► │ AWS  S3  │ ◄── HeadObject (real size/type)
+                                       └──────────┘
+```
 
----
+1. The client sends filename, size and type. The API authenticates the session, enforces the size limit and the storage quota, then signs a `PUT` URL scoped to a **server-generated** object key. It also returns a signed **upload ticket**.
+2. The browser streams the bytes straight to S3, reporting progress. Content type is part of the signature, so the object cannot be stored as a different type.
+3. The client posts the ticket back to `/api/files/confirm`. The server reads the object's **actual** size and content type from S3 with `HeadObject` before writing the row — an upload that lands over the limit is deleted from the bucket rather than recorded.
 
-## 🚀 Architectural Design Summary
-
-[Browser Client] ───(1. Request Upload URL)───► [Next.js Route Handler]
-│ │
-│ (3. Direct Binary Upload) │ (2. Presigned PUT URL)
-▼ ▼
-[AWS S3 Bucket] ◄───(4. Confirm Upload Metadata)─── [Supabase PostgreSQL]
-
-To support **100 MB+ uploads** efficiently without overloading server memory:
-
-1. Client requests a upload URL from `POST /api/files/upload-url` with file metadata.
-2. Backend verifies JWT authentication, enforces size limits (<= 100 MB), and generates an AWS S3 Presigned PUT URL.
-3. Client streams raw binary data directly to S3 via standard HTTP `PUT`.
-4. Upon S3 upload completion, client calls `POST /api/files/confirm` to commit file metadata into PostgreSQL via Prisma.
-
-> For an in-depth breakdown of deployment topology, OWASP file upload security implementations, database schema, and trade-offs at scale, read the full [System Design Document](./SYSTEM_DESIGN.md).
+This is what makes 100 MB uploads work on a platform with a 4.5 MB serverless request-body limit.
 
 ---
 
-## ⚙️ Local Development Setup
+## 📡 API
+
+All routes return JSON. Errors share one envelope: `{ "error": { "code", "message", "details?" } }`.
+
+| Method   | Endpoint                                | Auth   | Purpose                                            |
+| -------- | --------------------------------------- | ------ | -------------------------------------------------- |
+| `POST`   | `/api/auth/register`                    | –      | Create an account and sign in                      |
+| `POST`   | `/api/auth/login`                       | –      | Sign in                                            |
+| `POST`   | `/api/auth/logout`                      | –      | Clear the session cookie (idempotent)              |
+| `GET`    | `/api/auth/me`                          | ✅     | Current user (the cookie is `httpOnly`)            |
+| `POST`   | `/api/files/upload-url`                 | ✅     | Presigned `PUT` URL + upload ticket                |
+| `POST`   | `/api/files/confirm`                    | ✅     | Commit metadata after a successful upload          |
+| `GET`    | `/api/files`                            | ✅     | List own files — search, filter, sort, paginate    |
+| `GET`    | `/api/files/[id]`                       | ✅     | Single file's metadata                             |
+| `GET`    | `/api/files/[id]/download`              | ✅     | Presigned `GET` URL (60 min)                       |
+| `PATCH`  | `/api/files/[id]/visibility`            | ✅     | Publish / un-publish (rotates the share token)     |
+| `DELETE` | `/api/files/[id]`                       | ✅     | Delete from S3, then from PostgreSQL               |
+| `GET`    | `/api/public/files/[token]`             | –      | Share-link metadata + a 15-minute download URL     |
+| `GET`    | `/api/public/files/[token]/download`    | –      | `302` straight to a presigned URL                  |
+
+Owner-scoped routes answer **`404`, never `403`**, for a file that does not exist *or* is not yours — so ids cannot be probed.
+
+`GET /api/files` query parameters: `q`, `category` (`image`/`video`/`audio`/`document`/`archive`/`other`), `visibility` (`public`/`private`), `sort` (`createdAt`/`filename`/`fileSize`), `order` (`asc`/`desc`), `page`, `limit`. Unknown values fall back to defaults instead of erroring.
+
+---
+
+## ⚙️ Local Setup
 
 ### Prerequisites
 
-- Node.js >= 18.x
-- `pnpm` installed (`npm i -g pnpm`)
-- PostgreSQL Database instance (Supabase)
-- AWS Account with S3 Bucket & IAM programmatic keys
+- **Node.js ≥ 20.19** (required by Prisma 7)
+- `pnpm` (`npm i -g pnpm`)
+- A PostgreSQL database (this project uses Supabase)
+- An AWS account with an S3 bucket and programmatic IAM credentials
 
-### 1. Clone & Install Dependencies
+### 1. Clone and install
 
 ```bash
-git clone [https://github.com/tarikulislam2000/secure-file-storage.git](https://github.com/tarikulislam2000/secure-file-storage.git)
+git clone https://github.com/tarikulislam2000/secure-file-storage.git
 cd secure-file-storage
 pnpm install
 ```
 
-2. Environment Setup
-   Create a .env file in the root directory:
+### 2. Configure the environment
 
-# Server Config
+Create a `.env` file in the project root:
 
-PORT=3000
+```dotenv
+# App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
-# Authentication
+# Auth — must be at least 32 characters
+JWT_SECRET=replace_me_with_a_long_random_string
 
-JWT_SECRET=your_super_secret_jwt_key_here
+# Postgres: pooled connection for the app…
+DATABASE_URL="postgresql://postgres.[REF]:[PASSWORD]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true"
+# …and a direct connection for migrations
+DIRECT_URL="postgresql://postgres.[REF]:[PASSWORD]@aws-0-[region].pooler.supabase.com:5432/postgres"
 
-# Supabase Databases
-
-DATABASE_URL="postgresql://postgres.[PROJECT-REF]:[PASSWORD]@[aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true](https://aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true)"
-DIRECT_URL="postgresql://postgres.[PROJECT-REF]:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres"
-
-# AWS S3 Configuration
-
+# AWS S3
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-AWS_S3_BUCKET_NAME=your_s3_bucket_name
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_S3_BUCKET_NAME=your_bucket_name
+```
 
-3.  Database Migration
-    Bash
-    pnpm exec prisma db push 4. Run Development Server
-    Bash
-    pnpm dev
-    Open http://localhost:3000 in your browser.
+| Variable                | Used for                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`   | The origin baked into share links. **Set this in production**, or shared URLs will point at `localhost`. |
+| `JWT_SECRET`            | Signs session cookies and upload tickets. Rejected at first use if shorter than 32 characters. |
+| `DATABASE_URL`          | Runtime queries, through the transaction-mode pooler.                                  |
+| `DIRECT_URL`            | Schema pushes and migrations, read by `prisma.config.ts`.                              |
+| `AWS_*`                 | Presigning and object lifecycle.                                                       |
 
-          📜 Conventional Commit Rules
+### 3. S3 bucket setup
 
-    This repository strictly enforces Conventional Commits via Husky and Commitlint.
+- Keep **Block Public Access** fully enabled — every download is authorised by the API and served via a presigned URL.
+- Add a CORS rule so the browser can `PUT` directly:
 
-Format: <type>(<scope>): <short description>
+```json
+[
+  {
+    "AllowedOrigins": ["http://localhost:3000", "https://your-domain.com"],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"]
+  }
+]
+```
 
-Allowed Types: feat, fix, docs, style, refactor, perf, test, chore, build, ci
+- Scope the IAM user to `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on `arn:aws:s3:::your-bucket/*`.
 
-📄 License
-This project is open source and available under the [MIT License](./LICENSE).
+### 4. Create the schema and run
+
+```bash
+pnpm exec prisma db push   # also runs `prisma generate`
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+> The Prisma Client is generated into `src/generated/prisma`, which is git-ignored. `pnpm build` runs `prisma generate` first, so deployments regenerate it automatically.
+
+---
+
+## 📂 Project Structure
+
+```text
+src/
+├── app/
+│   ├── (auth)/            # /login and /register (route group)
+│   ├── api/               # Route Handlers — auth, files, public share
+│   ├── dashboard/         # Authenticated file manager
+│   ├── s/[token]/         # Public share landing page
+│   └── icon.tsx           # Generated favicon (ImageResponse)
+├── components/            # ui/, auth/, dashboard/, landing/
+├── hooks/                 # use-uploader, use-copy-link
+├── lib/
+│   ├── api.ts             # Error envelope, route wrapper, session guard
+│   ├── auth.ts            # Password hashing + session cookie
+│   ├── session.ts         # JWT sign/verify (also used by proxy.ts)
+│   ├── s3.ts              # Presigning, HeadObject, delete
+│   ├── files.ts           # Serialisation, quota, ownership guards
+│   ├── upload-ticket.ts   # Signed presign → confirm hand-off
+│   ├── rate-limit.ts      # Fixed-window limiter
+│   └── validation.ts      # Zod schemas shared with the UI
+└── proxy.ts               # Route guard (Next.js 16 renamed `middleware`)
+```
+
+## 📜 Scripts
+
+| Command       | Description                                |
+| ------------- | ------------------------------------------ |
+| `pnpm dev`    | Development server                         |
+| `pnpm build`  | `prisma generate` + production build       |
+| `pnpm start`  | Serve the production build                 |
+| `pnpm lint`   | ESLint                                     |
+
+---
+
+## 🧭 Conventional Commits
+
+Enforced by Husky + Commitlint.
+
+Format: `<type>(<scope>): <short description>`
+Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `build`, `ci`
+
+---
+
+## 📄 License
+
+Open source under the [MIT License](./LICENSE).

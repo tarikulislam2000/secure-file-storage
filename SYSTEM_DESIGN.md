@@ -2,126 +2,189 @@
 
 ## 1. Overview
 
-Secure File Storage is a full-stack file management platform that enables authenticated users to securely upload, manage, and share files up to 100 MB. A Next.js 16.0.3 monolith handles authentication, authorization, and PostgreSQL database operations, while all heavy binary file payloads stream directly between the client browser and AWS S3 via time-limited Presigned URLs.
+Secure File Storage is a full-stack file management platform where authenticated users upload, organise and share files of up to 100 MB. A Next.js 16 monolith owns authentication, authorisation and all PostgreSQL access, while every binary payload streams directly between the client browser and AWS S3 through time-limited presigned URLs.
+
+The central constraint shaping the design: **a 100 MB request body cannot pass through a serverless function.** Vercel caps request bodies at 4.5 MB, and buffering 100 MB in a function's memory would be wasteful even where it is allowed. Everything below follows from routing file bytes around the application server rather than through it.
 
 ---
 
-## 2. Architecture Diagram
+## 2. Architecture
 
-+-------------------------+
-| Client Browser |
-+------------+------------+
-| 1. POST /api/files/upload-url (Auth + Metadata)
-|
-v
-+-----------------------------------------------------------------------+
-| Next.js Monolith (Node.js App Router) |
-| |
-| +---------------------------+ +-----------------------------+ |
-| | JWT / Cookie Middleware | | Prisma ORM Client | |
-| +-------------+-------------+ +--------------+--------------+ |
-+----------------|------------------------------------|-----------------+
-| |
-| 2. Returns Presigned PUT URL | 4. Saves File Record
-v v
-+-------------------+ +--------------------+
-| AWS S3 Bucket | | Supabase Postgres |
-+---------+---------+ +--------------------+
-^
-| 3. Direct Binary Upload (PUT Request with Progress)
+```text
+                        ┌──────────────────────────────┐
+                        │        Client Browser        │
+                        └───────┬──────────────────┬───┘
+                                │                  │
+       1. POST /api/files/upload-url               │  3. PUT file body
+          (session cookie + metadata)              │     (direct, with progress)
+                                │                  │
+                                ▼                  │
+  ┌─────────────────────────────────────────────┐  │
+  │        Next.js Monolith (Node.js)           │  │
+  │                                             │  │
+  │  proxy.ts ──► Route Handlers ──► Prisma 7   │  │
+  │  (route guard)   (authorisation)  (+ pg)    │  │
+  └────────┬───────────────────────────┬────────┘  │
+           │                           │           │
+  2. presigned PUT URL          5. INSERT row      │
+     + signed upload ticket            │           │
+           │                           ▼           ▼
+           │              ┌────────────────┐  ┌──────────┐
+           └─────────────►│ Supabase       │  │ AWS  S3  │
+                          │ PostgreSQL     │  │ (private)│
+                          └────────────────┘  └────┬─────┘
+                                    ▲               │
+                          4. POST /api/files/confirm│
+                             └── HeadObject ────────┘
+                                (real size + type)
+```
 
-### End-to-End Request Flow:
+### End-to-end upload flow
 
-1. **Request Upload Permission:** Client sends file metadata (`filename`, `fileSize`, `mimeType`) with JWT cookies to `POST /api/files/upload-url`.
-2. **Authorization & URL Generation:** Next.js validates session and size limits ($\le 100\text{ MB}$), generates an S3 Presigned `PUT` URL via AWS SDK, and returns it.
-3. **Direct Binary Stream:** Browser streams raw file bytes directly to AWS S3 using the Presigned URL, executing Axios `onUploadProgress` callbacks.
-4. **Metadata Commit:** Upon S3 HTTP 200 response, client calls `POST /api/files/confirm` to record the persistent metadata into PostgreSQL via Prisma.
-5. **Private Access:** Client requests `GET /api/files/[id]/download`. Backend verifies owner ownership and generates a 60-minute S3 Presigned `GET` URL.
+1. **Presign request.** Client sends `filename`, `fileSize`, `mimeType` with its session cookie. The API verifies the session, enforces the per-file limit and the account's storage quota, then signs a `PUT` URL for a server-generated key (`uploads/{ownerId}/{uuid}.{ext}`).
+2. **Ticket issued.** Alongside the URL, the API returns a short-lived signed JWT containing `{ key, ownerId, filename }`. The client treats it as opaque.
+3. **Direct transfer.** The browser `PUT`s the bytes to S3, driving an `onUploadProgress` bar. `Content-Type` is part of the signature, so the object cannot be stored under a different type than the one presigned.
+4. **Confirmation.** The client posts the ticket back. The server calls `HeadObject` to read the object's real size and content type.
+5. **Commit.** The row is written from the ticket (identity) and the `HeadObject` result (facts). Anything that fails validation at this point is deleted from S3 rather than recorded.
+
+### Download flow
+
+`GET /api/files/[id]/download` verifies ownership, then mints a 60-minute presigned `GET`. Public share links resolve a random token to a 15-minute presigned `GET`. The bucket itself is never readable.
 
 ---
 
 ## 3. Key Decisions and Rationale
 
-### 3.1 Deployment Topology: Monolith vs. Split Services
+### 3.1 Deployment topology: monolith vs. split services
 
-- **Decision:** Next.js Full-Stack Monolith (App Router + Route Handlers).
-- **Alternatives:** Decoupled Express.js REST API + React SPA (or microservices).
-- **Rationale:** Eliminates CORS complexity, dual deployment pipelines, and latency between auth middleware and route logic. Allows full end-to-end TypeScript type safety while meeting the speed requirements of this project scope.
+- **Decision:** Next.js full-stack monolith (App Router + Route Handlers).
+- **Alternatives:** Decoupled Express REST API + React SPA; microservices.
+- **Rationale:** Removes CORS surface, dual pipelines, and the latency between the auth layer and route logic, while keeping end-to-end TypeScript types from Prisma model to React prop. The workload here is I/O-bound coordination, not CPU work that needs isolating.
 
-### 3.2 File Transfer: Presigned URLs vs. Proxying Through Backend
+### 3.2 File transfer: presigned URLs vs. proxying
 
-- **Decision:** Direct browser-to-S3 upload via AWS S3 Presigned `PUT` URLs.
-- **Alternatives:** Streaming file streams through Next.js/Express API routes to S3.
-- **Rationale:** Uploading 100 MB files through Node.js consumes server memory (RAM buffers) and risks serverless function payload limits (Vercel has a 4.5 MB request payload limit). Direct S3 presigned uploads bypass the application server entirely for binary transport, ensuring unlimited upload concurrency and reduced bandwidth costs.
+- **Decision:** Direct browser-to-S3 via presigned `PUT`.
+- **Alternatives:** Streaming through the API to S3.
+- **Rationale:** The 4.5 MB serverless body limit makes proxying impossible for the target file size, and buffering 100 MB per concurrent upload would tie application memory to user bandwidth. Direct upload makes concurrency a function of S3, not of our instance count.
 
-### 3.3 Auth: JWT in httpOnly Cookies vs. Redis Sessions vs. Managed Auth
+### 3.3 Trusting the upload: signed ticket + `HeadObject`
 
-- **Decision:** JWTs stored in `httpOnly`, `SameSite=Lax`, `Secure` HTTP cookies.
-- **Alternatives:** Server-side sessions in Redis, Supabase Auth SDK, or NextAuth/Auth.js.
-- **Rationale:** Avoids state management overhead and external session store network calls (e.g., Redis lookups) on every API invocation. Storing JWTs in `httpOnly` cookies prevents Cross-Site Scripting (XSS) token theft while enabling stateless middleware verification.
+- **Decision:** `confirm` accepts only a signed ticket, and reads size and content type back from S3.
+- **Alternatives:** Accepting `{ key, size, mimeType }` from the client and validating the key prefix.
+- **Rationale:** A presigned URL does not constrain body size — a client can declare 1 KB and upload 101 MB, and S3 will accept it. Any size the client reports is therefore unverifiable. `HeadObject` is the only account of the upload that cannot be fabricated, and the signed ticket removes the need to parse or trust a client-supplied object key at all.
 
-### 3.4 Database Access: Prisma vs. Raw SQL
+### 3.4 Auth: JWT in `httpOnly` cookies
 
-- **Decision:** Prisma ORM 7 with PostgreSQL.
-- **Alternatives:** Kysely, Drizzle ORM, or Raw SQL via `pg`.
-- **Rationale:** Delivers type-safe database access out-of-the-box, automatic schema migrations, and relational mapping between `User` and `File` models, reducing query-level security bugs like SQL injection.
+- **Decision:** HS256 JWTs in `httpOnly`, `SameSite=Lax`, `Secure` (in production) cookies, 7-day expiry.
+- **Alternatives:** Redis-backed server sessions; Supabase Auth; NextAuth.
+- **Rationale:** Stateless verification costs no network round trip per request, which matters when every route re-verifies. `httpOnly` puts the token out of reach of XSS, and `SameSite=Lax` keeps it off cross-site POSTs. The token pins `algorithms: ["HS256"]`, plus issuer and audience, so a forged `alg: none` header cannot bypass verification. Cost: no instant global revocation — see §6.
 
-### 3.5 Public/Private File Access: Presigned GET URLs vs. Bucket Policy
+### 3.5 Route guarding: `proxy.ts` is not the authorisation boundary
 
-- **Decision:** All file downloads (both public and private) route through the backend to generate short-lived S3 Presigned `GET` URLs.
-- **Alternatives:** Making the AWS S3 Bucket publicly readable via S3 Bucket Policy for public files.
-- **Rationale:** Keeps the S3 bucket 100% private (`Block Public Access` enabled). Prevents hotlinking, scraping, and unexpected S3 egress bandwidth bills. Public files receive a unique shareable token checked by the backend before issuing a presigned `GET` URL.
+- **Decision:** `src/proxy.ts` (Next.js 16's rename of `middleware.ts`) performs full JWT verification and redirects, but every route handler independently calls `requireSession()`, and every file query is scoped by `ownerId` in its `where` clause.
+- **Rationale:** The proxy decides *where to send a browser*; the database query decides *what data exists*. A request that somehow bypassed the proxy would still read nothing belonging to another user. Next.js's own guidance is explicitly against treating this layer as the security boundary.
+
+### 3.6 Database access: Prisma 7 with a driver adapter
+
+- **Decision:** Prisma 7 with the `prisma-client` generator and `@prisma/adapter-pg` over Supabase's transaction-mode pooler.
+- **Rationale:** Prisma 7 ships no query engine binary, so a driver adapter is required rather than optional. The pool is deliberately small (`max: 5`, 10s idle reclaim) because serverless invocations are short-lived and PgBouncer, not the app, is doing the real pooling. Type-safe queries also eliminate the string-concatenation class of SQL injection.
+
+### 3.7 Public sharing: tokens over bucket policy
+
+- **Decision:** Public downloads still route through the API and receive a short-lived presigned `GET`.
+- **Alternatives:** Making objects public with an S3 bucket policy.
+- **Rationale:** Keeps Block Public Access on, so no file is ever reachable by guessing an S3 URL. It bounds hotlinking and egress: a scraped presigned URL dies in 15 minutes, whereas a public object URL is permanent. The share token is a random UUID held **separately from the primary key**, so a share link leaks nothing about the id space.
+
+### 3.8 Revocation: rotate the token on un-publish
+
+- **Decision:** Setting a file back to private regenerates its `shareToken`.
+- **Rationale:** Without rotation, "make private" would only *pause* a link — anyone who saved it could use it again the moment the owner re-published. Rotating makes revocation permanent, which is what the action means to a user.
 
 ---
 
 ## 4. Data Model
 
-### User Model
+```prisma
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String              // bcrypt hash, cost 12
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  files     File[]
+  @@map("users")
+}
 
-- `id` (`String`, Primary Key, UUIDv4): Unique user identifier.
-- `email` (`String`, Unique): User's primary email for login.
-- `password` (`String`): Salted and hashed password string (`bcryptjs` cost factor 12).
-- `createdAt` / `updatedAt` (`DateTime`): Timestamp tracking.
+model File {
+  id         String   @id @default(uuid())
+  filename   String              // sanitised display name
+  s3Key      String   @unique    // uploads/{ownerId}/{uuid}.{ext} — never exposed
+  fileSize   Int                 // bytes, as reported by S3
+  mimeType   String              // content type, as reported by S3
+  isPublic   Boolean  @default(false)
+  shareToken String?  @unique @default(uuid())
+  ownerId    String
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-### File Model
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@map("files")
+}
+```
 
-- `id` (`String`, Primary Key, UUIDv4): Internal database identifier.
-- `filename` (`String`): Original file display name (e.g., `document.pdf`).
-- `s3Key` (`String`, Unique): Random, non-colliding storage key path in S3 (`uploads/{userId}/{uuid}-{filename}`).
-- `fileSize` (`Int`): File size in bytes.
-- `mimeType` (`String`): MIME content-type string.
-- `isPublic` (`Boolean`, default: `false`): Visibility control flag.
-- `shareToken` (`String`, Unique, Optional): Random cryptographic token generated for public access links (kept separate from database `id` to prevent primary key enumeration attacks).
-- `ownerId` (`String`, Foreign Key): Relates to `User.id` with `ON DELETE CASCADE`.
+**Indexing.** Every dashboard query is "this owner's files, newest first", so one composite index on `(ownerId, createdAt DESC)` serves both the filter and the sort in a single scan; it also covers plain `ownerId` lookups, making a standalone index redundant. `shareToken` is `@unique`, which already creates its own index — a second one would only add write cost.
 
----
-
-## 5. Security Considerations & OWASP Implementation
-
-- **OWASP File Upload Mitigation:**
-  - **Randomized S3 Keys:** User files are renamed upon upload to prevent directory traversal and path manipulation attacks.
-  - **Client & Server Double Size Validation:** Enforced both on the client UI and validated on the backend before generating presigned URLs.
-  - **Bucket Lock Security:** S3 `Block Public Access` is enforced; no file is accessible via standard public S3 HTTP URLs.
-- **Cryptographic Security:** Passwords hashed using `bcryptjs` with 12 salt rounds.
-- **Authorization Checks:** Every mutating (`DELETE`, `PATCH`) or private read operation verifies that `file.ownerId === request.user.id`.
-- **Information Disclosure Prevention:** Invalid or private share tokens return generic `404 Not Found` responses instead of `403 Forbidden` to prevent resource enumeration.
-- **Least Privilege IAM:** AWS IAM programmatic access keys are restricted exclusively to `s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject` permissions scoped to the target bucket.
-
----
-
-## 6. Trade-Offs & Scaling Considerations
-
-- **Session Revocation:** _Trigger:_ Requirement for immediate global session invalidation across multiple active devices $\rightarrow$ Transition from stateless JWTs to Redis-backed active session stores.
-- **Post-Upload Processing:** _Trigger:_ Requirement for automatic image thumbnail generation, virus scanning, or metadata extraction $\rightarrow$ Introduce an asynchronous event queue (AWS S3 Event Notifications $\rightarrow$ AWS SQS $\rightarrow$ AWS Lambda).
-- **Heavy Public Read Traffic:** _Trigger:_ High bandwidth consumption and download latency for viral public files $\rightarrow$ Place AWS CloudFront (CDN) in front of S3 with signed cookies/URLs.
-- **Upload Confirmation Reliability:** _Trigger:_ User closes browser tab mid-upload causing orphan files in S3 without DB records $\rightarrow$ Implement an automated lifecycle rule in S3 bucket along with a daily cron job comparing S3 object keys with Postgres DB keys.
-- **Team & Deploy Independence:** _Trigger:_ Engineering team growth beyond a single full-stack squad $\rightarrow$ Decouple Next.js frontend to Vercel and spin up dedicated Node.js microservices on AWS ECS/Fargate.
+**Cascade.** Deleting a user removes their file rows. S3 objects are removed explicitly by the delete route, which runs S3 first (recoverable if it fails) and PostgreSQL second.
 
 ---
 
-## 7. Future Enhancements (With More Scope)
+## 5. Security Model
 
-- **Automated Testing Suite:** End-to-End upload testing with Playwright and API unit tests using Vitest.
-- **MIME-Type Magic Bytes Inspection:** Serverless worker checking magic byte signatures rather than trusting client-provided `Content-Type` headers.
-- **Rate Limiting:** Sliding-window rate limiting on presigned URL requests using `@upstash/ratelimit` and Redis.
-- **Chunked Multipart Uploads:** S3 Multipart upload support for continuous resumable uploads of multi-gigabyte files.
+### OWASP file-upload mitigations
+
+- **Server-generated keys.** Object keys are `uploads/{ownerId}/{uuid}`; the user's filename is stored only as a display label, after stripping path separators and control characters. Path traversal has nothing to act on.
+- **Size validated three times:** in the browser (fast feedback), at presign (declared size), and after upload against S3's own `Content-Length` — the only one that is authoritative. Over-limit objects are deleted from the bucket.
+- **Content type pinned to the signature.** `signableHeaders: ["content-type"]` puts the header inside the SigV4 signature; a mismatched `PUT` is rejected by S3 with `403`. Without this, `ContentType` on the command is advisory only.
+- **Executable extensions blocked** (`.exe`, `.dll`, `.sh`, `.bat`, `.js`, …) so the service cannot be used as a malware host.
+- **Downloads are always `Content-Disposition: attachment`**, with the filename re-sanitised at signing time, so an uploaded HTML or SVG file can never be rendered as a document.
+- **Bucket is private.** Block Public Access stays enabled; there is no code path that makes an object public.
+
+### Authentication and authorisation
+
+- `bcryptjs` at cost 12, with the 72-byte input ceiling reflected in the password schema.
+- **Login is timing-safe.** An unknown email still runs a bcrypt comparison against a real dummy hash, so response latency cannot be used to enumerate registered accounts. Measured at parity (~0.58 s either way).
+- **Owner-scoped queries.** Ownership is part of the `where` clause, not a check applied after loading.
+- **`404`, never `403`,** for files that are missing or not yours — and identically for unknown, revoked, or private share tokens. The API never confirms that a resource exists.
+- **Rate limiting** (fixed-window, per client IP): register 5/15 min, login 10/15 min, presign 60/min, public share 60/min, public download 30/min.
+- **Least-privilege IAM.** The deployed credentials should carry only `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, scoped to the bucket ARN.
+
+### Known limitations
+
+- **Rate limit state is per-instance.** It lives in process memory, so with *n* warm serverless instances the effective ceiling is *n* × limit. It blunts credential stuffing from a single client; it is not a defence against a distributed attack. See §6.
+- **Registration reveals whether an email exists** (`409 Conflict`). Avoiding this requires an email-verification flow, which is out of scope here. Login, which is the endpoint an attacker would actually probe, does not leak.
+- **Content type is trusted from the client at presign.** It is pinned to the signature and read back from S3, so it cannot be *changed* after the fact — but a determined user can still label a file inaccurately. Magic-byte inspection is the fix (see §7).
+
+---
+
+## 6. Trade-Offs & Scaling Triggers
+
+| Trigger | Response |
+| ------- | -------- |
+| Rate limiting must hold across instances, or survive a distributed attack | Move `checkRateLimit` behind Upstash Redis + `@upstash/ratelimit`; the call signature is already shaped for it |
+| Sessions must be revocable instantly across devices | Replace stateless JWTs with a Redis session store, accepting a lookup per request |
+| Thumbnails, virus scanning, or metadata extraction needed | S3 Event Notification → SQS → Lambda, keeping post-processing off the request path |
+| Public files attract heavy read traffic | CloudFront in front of S3 with signed URLs/cookies, so egress is cached at the edge |
+| Abandoned uploads accumulate in the bucket | S3 lifecycle rule on the `uploads/` prefix plus a reconciliation job diffing S3 keys against `files.s3Key` |
+| Files exceed a few hundred MB, or resumability is required | S3 multipart upload with per-part presigned URLs |
+| The team outgrows a single full-stack squad | Split the frontend from the API and deploy the API to ECS/Fargate |
+
+---
+
+## 7. Future Enhancements
+
+- **Automated tests.** Playwright for the upload path, Vitest for the authorisation and validation units. Verification for this build was done by driving the real application against live S3 and PostgreSQL, which is not a substitute for a committed suite.
+- **Magic-byte MIME inspection** in a post-upload worker, rather than trusting the declared content type.
+- **Resumable multipart uploads** for multi-gigabyte files.
+- **Folders and bulk actions**, plus shareable links with expiry dates and optional passwords.
+- **Audit log** of downloads and visibility changes per file.
