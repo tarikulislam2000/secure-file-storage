@@ -50,6 +50,14 @@ export interface PublicFile {
   fileSize: number;
   mimeType: string;
   category: FileCategory;
+  /**
+   * Short-lived presigned URL for playing the file inline.
+   *
+   * Only present for images, video and audio — the types the share page can
+   * actually render. Optional because it expires, so a stale response must fall
+   * back to the icon view rather than show a broken player.
+   */
+  downloadUrl?: string;
   createdAt: string;
 }
 

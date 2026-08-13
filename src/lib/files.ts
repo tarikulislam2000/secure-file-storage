@@ -10,6 +10,7 @@ import {
   MAX_FILE_SIZE_BYTES,
   PREVIEW_URL_TTL_SECONDS,
   PREVIEWABLE_CATEGORIES,
+  PUBLIC_DOWNLOAD_URL_TTL_SECONDS,
   USER_STORAGE_QUOTA_BYTES,
   type FileCategory,
 } from "@/lib/constants";
@@ -213,14 +214,48 @@ export async function assertQuotaAvailable(
  * `s3Key`, and not even the share token itself. A visitor learns what the file
  * is and nothing about the account behind it.
  */
-export function serializePublicFile(file: FileRecord): PublicFile {
+export async function serializePublicFile(
+  file: FileRecord,
+): Promise<PublicFile> {
   return {
     filename: file.filename,
     fileSize: file.fileSize,
     mimeType: file.mimeType,
     category: categorizeMimeType(file.mimeType),
+    downloadUrl: await buildInlinePreviewUrl(file),
     createdAt: file.createdAt.toISOString(),
   };
+}
+
+/** Media types the share page can render inline. */
+const INLINE_PREVIEW_PREFIXES = ["image/", "video/", "audio/"];
+
+/**
+ * Presigned URL for playing a shared file in the page, or `undefined` when
+ * there is nothing to play.
+ *
+ * Restricted to media types on purpose: an archive or a PDF gets an icon and a
+ * download button, so signing a URL for it would hand out read access the page
+ * never uses. The TTL is the same 15 minutes as every other public link, which
+ * keeps a URL scraped out of the HTML short-lived.
+ */
+async function buildInlinePreviewUrl(
+  file: FileRecord,
+): Promise<string | undefined> {
+  const mimeType = file.mimeType.toLowerCase();
+
+  if (!INLINE_PREVIEW_PREFIXES.some((prefix) => mimeType.startsWith(prefix))) {
+    return undefined;
+  }
+
+  const { url } = await createDownloadUrl({
+    key: file.s3Key,
+    filename: file.filename,
+    contentType: file.mimeType,
+    expiresIn: PUBLIC_DOWNLOAD_URL_TTL_SECONDS,
+  });
+
+  return url;
 }
 
 /**

@@ -1,18 +1,12 @@
-import {
-  Archive,
-  Download,
-  FileText,
-  Film,
-  Image as ImageIcon,
-  Music,
-  ShieldCheck,
-} from "lucide-react";
+import { Download, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { ComponentType } from "react";
+import { cache } from "react";
 
-import { formatBytes, type FileCategory } from "@/lib/constants";
+import { PublicFilePreview } from "@/components/share/public-file-preview";
+import { cn } from "@/lib/cn";
+import { formatBytes } from "@/lib/constants";
 import { serializePublicFile } from "@/lib/files";
 import { prisma } from "@/lib/prisma";
 
@@ -20,31 +14,24 @@ import { prisma } from "@/lib/prisma";
  * Public share page.
  *
  * Rendered on the server straight from the database rather than fetching our
- * own API over HTTP — one less round trip, and the page works with JavaScript
- * disabled. The download button points at the redirect route, so the presigned
- * URL is minted fresh at click time instead of being embedded in HTML that
- * might be cached or shared onward.
+ * own API over HTTP — one less round trip, and the metadata renders with
+ * JavaScript disabled. The download button points at the redirect route, so the
+ * URL behind it is minted fresh at click time rather than embedded in HTML that
+ * might be cached or forwarded.
  */
 
-const CATEGORY_ICON: Record<
-  FileCategory,
-  ComponentType<{ className?: string }>
-> = {
-  image: ImageIcon,
-  video: Film,
-  audio: Music,
-  document: FileText,
-  archive: Archive,
-  other: FileText,
-};
-
-async function loadSharedFile(token: string) {
+/**
+ * `cache()` because Next.js calls `generateMetadata` and the page in the same
+ * render pass — without it every share view costs two identical queries and two
+ * presigned URLs.
+ */
+const loadSharedFile = cache(async (token: string) => {
   const file = await prisma.file.findFirst({
     where: { shareToken: token, isPublic: true },
   });
 
   return file ? serializePublicFile(file) : null;
-}
+});
 
 export async function generateMetadata({
   params,
@@ -70,8 +57,6 @@ export default async function SharePage({ params }: PageProps<"/s/[token]">) {
     notFound();
   }
 
-  const Icon = CATEGORY_ICON[file.category];
-
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-6 p-4">
       <Link
@@ -82,10 +67,14 @@ export default async function SharePage({ params }: PageProps<"/s/[token]">) {
         Secure File Storage
       </Link>
 
-      <main className="w-full max-w-md rounded-xl border border-border bg-surface p-6 text-center shadow-sm sm:p-8">
-        <span className="mx-auto flex size-14 items-center justify-center rounded-xl bg-primary-soft text-primary">
-          <Icon className="size-7" aria-hidden />
-        </span>
+      <main
+        className={cn(
+          "w-full rounded-xl border border-border bg-surface p-6 text-center shadow-sm sm:p-8",
+          // Media needs the extra width; an icon card looks lost in it.
+          file.downloadUrl ? "max-w-lg" : "max-w-md",
+        )}
+      >
+        <PublicFilePreview file={file} />
 
         <h1 className="mt-4 truncate text-lg font-semibold" title={file.filename}>
           {file.filename}

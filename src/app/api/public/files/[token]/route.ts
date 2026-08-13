@@ -45,7 +45,7 @@ export const GET = withErrorHandling(
     });
 
     const response = jsonOk({
-      file: serializePublicFile(file),
+      file: await serializePublicFile(file),
       download: { url, expiresIn },
     });
 
