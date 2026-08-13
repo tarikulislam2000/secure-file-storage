@@ -21,6 +21,16 @@ export const UPLOAD_URL_TTL_SECONDS = 5 * 60; // 5 minutes
 /** Lifetime of a presigned GET URL handed to an authorised downloader. */
 export const DOWNLOAD_URL_TTL_SECONDS = 60 * 60; // 1 hour
 
+/**
+ * Lifetime of a presigned GET URL minted for a public share link.
+ *
+ * Shorter than the owner's own: a share page can be seen by anyone holding the
+ * link, and a raw S3 URL scraped from it bypasses our rate limiting entirely.
+ * Keeping the window narrow means a scraped URL is stale almost immediately,
+ * while the share link itself keeps working.
+ */
+export const PUBLIC_DOWNLOAD_URL_TTL_SECONDS = 15 * 60; // 15 minutes
+
 /** Session lifetime for the signed JWT and its httpOnly cookie. */
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 

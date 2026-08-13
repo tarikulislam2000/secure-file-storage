@@ -169,6 +169,54 @@ export async function assertQuotaAvailable(
   }
 }
 
+/** What an anonymous visitor holding a share link is allowed to see. */
+export interface PublicFile {
+  filename: string;
+  fileSize: number;
+  mimeType: string;
+  category: FileCategory;
+  createdAt: string;
+}
+
+/**
+ * Share-page view of a file.
+ *
+ * Everything identifying is withheld — no database id, no owner, no email, no
+ * `s3Key`, and not even the share token itself. A visitor learns what the file
+ * is and nothing about the account behind it.
+ */
+export function serializePublicFile(file: FileRecord): PublicFile {
+  return {
+    filename: file.filename,
+    fileSize: file.fileSize,
+    mimeType: file.mimeType,
+    category: categorizeMimeType(file.mimeType),
+    createdAt: file.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Resolves a share token to a file that is currently public, or throws `404`.
+ *
+ * `isPublic` is part of the query, so a token belonging to a file that has been
+ * taken private simply does not match. Unknown token, revoked token and private
+ * file are indistinguishable from the outside — the response never confirms
+ * that a token was ever valid.
+ */
+export async function findPublicFileOrThrow(
+  shareToken: string,
+): Promise<FileRecord> {
+  const file = await prisma.file.findFirst({
+    where: { shareToken, isPublic: true },
+  });
+
+  if (!file) {
+    throw ApiError.notFound("This file is not available.");
+  }
+
+  return file;
+}
+
 /**
  * Loads a file the caller owns, or throws `404`.
  *
