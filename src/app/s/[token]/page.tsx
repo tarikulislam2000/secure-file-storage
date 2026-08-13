@@ -1,0 +1,127 @@
+import {
+  Archive,
+  Download,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Music,
+  ShieldCheck,
+} from "lucide-react";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import type { ComponentType } from "react";
+
+import { formatBytes, type FileCategory } from "@/lib/constants";
+import { serializePublicFile } from "@/lib/files";
+import { prisma } from "@/lib/prisma";
+
+/**
+ * Public share page.
+ *
+ * Rendered on the server straight from the database rather than fetching our
+ * own API over HTTP — one less round trip, and the page works with JavaScript
+ * disabled. The download button points at the redirect route, so the presigned
+ * URL is minted fresh at click time instead of being embedded in HTML that
+ * might be cached or shared onward.
+ */
+
+const CATEGORY_ICON: Record<
+  FileCategory,
+  ComponentType<{ className?: string }>
+> = {
+  image: ImageIcon,
+  video: Film,
+  audio: Music,
+  document: FileText,
+  archive: Archive,
+  other: FileText,
+};
+
+async function loadSharedFile(token: string) {
+  const file = await prisma.file.findFirst({
+    where: { shareToken: token, isPublic: true },
+  });
+
+  return file ? serializePublicFile(file) : null;
+}
+
+export async function generateMetadata({
+  params,
+}: PageProps<"/s/[token]">): Promise<Metadata> {
+  const { token } = await params;
+  const file = await loadSharedFile(token);
+
+  return {
+    title: file ? `${file.filename} — shared file` : "File not available",
+    // A share link should not be indexed: the owner chose to give it to
+    // specific people, not to publish it to search engines.
+    robots: { index: false, follow: false },
+  };
+}
+
+export default async function SharePage({ params }: PageProps<"/s/[token]">) {
+  const { token } = await params;
+  const file = await loadSharedFile(token);
+
+  // Unknown token, revoked link and private file all land here, so the page
+  // never confirms whether a token was ever valid.
+  if (!file) {
+    notFound();
+  }
+
+  const Icon = CATEGORY_ICON[file.category];
+
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-6 p-4">
+      <Link
+        href="/"
+        className="flex items-center gap-2 text-sm font-semibold tracking-tight text-muted transition-colors hover:text-foreground"
+      >
+        <ShieldCheck className="size-5 text-primary" aria-hidden />
+        Secure File Storage
+      </Link>
+
+      <main className="w-full max-w-md rounded-xl border border-border bg-surface p-6 text-center shadow-sm sm:p-8">
+        <span className="mx-auto flex size-14 items-center justify-center rounded-xl bg-primary-soft text-primary">
+          <Icon className="size-7" aria-hidden />
+        </span>
+
+        <h1 className="mt-4 truncate text-lg font-semibold" title={file.filename}>
+          {file.filename}
+        </h1>
+
+        <p className="mt-1 text-sm text-muted">
+          {formatBytes(file.fileSize)} · Shared{" "}
+          <time dateTime={file.createdAt}>
+            {new Intl.DateTimeFormat(undefined, {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            }).format(new Date(file.createdAt))}
+          </time>
+        </p>
+
+        <a
+          href={`/api/public/files/${token}/download`}
+          className="mt-6 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover"
+        >
+          <Download className="size-4" aria-hidden />
+          Download
+        </a>
+
+        <p className="mt-4 text-xs text-muted">
+          Shared publicly by the file&apos;s owner. The owner can revoke this
+          link at any time.
+        </p>
+      </main>
+
+      <Link
+        href="/register"
+        className="text-sm text-muted transition-colors hover:text-foreground"
+      >
+        Store your own files securely →
+      </Link>
+    </div>
+  );
+}

@@ -14,20 +14,9 @@ import {
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { getFileExtension } from "@/lib/s3";
+import type { PublicFile, SerializedFile } from "@/lib/types";
 
-/** Shape returned to clients. Deliberately omits `s3Key` and `ownerId`. */
-export interface SerializedFile {
-  id: string;
-  filename: string;
-  fileSize: number;
-  mimeType: string;
-  category: FileCategory;
-  isPublic: boolean;
-  /** Present only while the file is public; `null` otherwise. */
-  shareUrl: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export type { PublicFile, SerializedFile } from "@/lib/types";
 
 /**
  * Maps a database row onto the public API shape.
@@ -167,15 +156,6 @@ export async function assertQuotaAvailable(
       `Not enough storage. ${formatBytes(remaining)} remaining of your ${formatBytes(USER_STORAGE_QUOTA_BYTES)} quota.`,
     );
   }
-}
-
-/** What an anonymous visitor holding a share link is allowed to see. */
-export interface PublicFile {
-  filename: string;
-  fileSize: number;
-  mimeType: string;
-  category: FileCategory;
-  createdAt: string;
 }
 
 /**
